@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="no">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TaskBroadcaster</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
+<style>
+body{font:16px system-ui;max-width:760px;margin:40px auto;padding:16px;background:#f6f7f9}
+main{background:#fff;padding:26px;border-radius:16px}
+form{display:flex;gap:8px}
+input{flex:1;padding:12px}
+button{padding:12px 18px}
+.task{display:flex;justify-content:space-between;padding:14px;border:1px solid #ddd;margin:8px 0;border-radius:9px}
+.pending{color:#92400e}.completed{color:#166534}.error{color:#b91c1c}
+</style>
+</head>
+<body>
+<main>
+<h1>Oppgavebehandler</h1>
+<p>REST API + SignalR + BackgroundService</p>
+<div id="connection">Kobler til …</div>
+
+<form id="taskForm">
+<input id="taskInput" maxlength="200"
+       placeholder="Hva må gjøres?"
+       autocomplete="off">
+<button>Legg til</button>
+</form>
+
+<p id="error" class="error" role="alert"></p>
+<section id="taskList" aria-live="polite"></section>
+</main>
+
+<script>
+const list = document.querySelector('#taskList');
+const input = document.querySelector('#taskInput');
+const error = document.querySelector('#error');
+const connection = document.querySelector('#connection');
+
+const hub = new signalR.HubConnectionBuilder()
+    .withUrl('/taskhub')
+    .withAutomaticReconnect()
+    .build();
+
+function render(task) {
+    const old = document.querySelector('#task-' + task.id);
+    if (old) old.remove();
+
+    const el = document.createElement('article');
+    el.className = 'task';
+    el.id = 'task-' + task.id;
+
+    const title = document.createElement('span');
+    title.textContent = task.title;
+
+    const badge = document.createElement('b');
+    badge.textContent = task.status;
+    badge.className = task.status.toLowerCase();
+
+    el.append(title, badge);
+    list.prepend(el);
+}
+
+hub.on('TaskCreated', render);
+hub.on('TaskUpdated', render);
+
+hub.onreconnecting(() =>
+    connection.textContent = 'Kobler til igjen …');
+
+hub.onreconnected(() =>
+    connection.textContent = 'SignalR tilkoblet');
+
+hub.onclose(() =>
+    connection.textContent = 'SignalR frakoblet');
+
+async function load() {
+    const response = await fetch('/api/tasks');
+
+    if (!response.ok)
+        throw Error('Kunne ikke laste oppgaver');
+
+    const tasks = await response.json();
+    tasks.forEach(render);
+}
+
+document.querySelector('#taskForm')
+    .addEventListener('submit', async event => {
+        event.preventDefault();
+
+        error.textContent = '';
+
+        const title = input.value.trim();
+
+        if (!title)
+            return;
+
+        try {
+            const response = await fetch('/api/tasks', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ title })
+            });
+
+            if (!response.ok) {
+                const body =
+                    await response.json().catch(() => ({}));
+
+                throw Error(
+                    body.error ||
+                    'Kunne ikke opprette oppgave');
+            }
+
+            input.value = '';
+            input.focus();
+        }
+        catch (exception) {
+            error.textContent = exception.message;
+        }
+    });
+
+(async () => {
+    try {
+        await hub.start();
+        connection.textContent = 'SignalR tilkoblet';
+        await load();
+    }
+    catch (exception) {
+        connection.textContent =
+            'SignalR kunne ikke kobles til';
+
+        error.textContent = exception.message;
+    }
+})();
+</script>
+</body>
+</html>
